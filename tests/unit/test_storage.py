@@ -50,7 +50,7 @@ def test_pay_order_amount_mismatch() -> None:
 
     store.add_item(order.id, menu_item_id=1, quantity=1)
 
-    with pytest.raises(ValueError, match="Payment amount does not match total"):
+    with pytest.raises(ValueError, match="Payment amount does not match final total"):
         store.pay_order(order.id, method="card", amount=1000)
 
 

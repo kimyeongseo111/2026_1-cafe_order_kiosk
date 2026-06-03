@@ -3,7 +3,7 @@ from __future__ import annotations
 import shlex
 from dataclasses import dataclass
 
-from cafe_order_kiosk.models import OrderStatus
+from cafe_order_kiosk.models import Coupon, DiscountKind, Order, OrderStatus
 from cafe_order_kiosk.kiosk_store import KioskStore
 from cafe_order_kiosk.utils import format_money
 
@@ -45,6 +45,8 @@ def run_cli() -> int:
             handle_orders(store, args)
         elif command in {"결제", "pay"}:
             handle_pay(store, state, args)
+        elif command in {"쿠폰", "coupon"}:
+            handle_coupon(store, state, args)
         else:
             print("알 수 없는 명령입니다. '도움말'을 입력하세요.")
     print("종료합니다.")
@@ -62,6 +64,9 @@ def print_help() -> None:
     print("\t주문 취소")
     print("\t주문목록 목록 [진행중|결제완료|취소]")
     print("\t결제 <방법> [금액]")
+    print("\t쿠폰 적용 <코드>")
+    print("\t쿠폰 제거")
+    print("\t쿠폰 목록")
     print("\t도움말")
     print("\t종료")
 
@@ -176,7 +181,7 @@ def handle_orders(store: KioskStore, args: list[str]) -> None:
 
     for order in orders:
         print(
-            f"  #{order.id} {format_status(order.status)} - {format_money(order.total)}"
+            f"  #{order.id} {format_status(order.status)} - {format_money(order.final_total)}"
         )
 
 
@@ -200,7 +205,7 @@ def handle_pay(store: KioskStore, state: CLIState, args: list[str]) -> None:
         print("주문을 찾을 수 없습니다.")
         return
     if amount is None:
-        amount = order.total
+        amount = order.final_total
 
     try:
         store.pay_order(order.id, method, amount)
@@ -211,7 +216,54 @@ def handle_pay(store: KioskStore, state: CLIState, args: list[str]) -> None:
     print(f"주문 #{order.id} 결제 완료 ({method}).")
 
 
-def print_order(order) -> None:
+def handle_coupon(store: KioskStore, state: CLIState, args: list[str]) -> None:
+    if not args:
+        print("쿠폰 명령어: 적용, 제거, 목록")
+        return
+
+    action, tail = args[0], args[1:]
+
+    if action in {"목록", "list"}:
+        print("사용 가능 쿠폰:")
+        for coupon in store.list_coupons():
+            print(f"\t{coupon.code} - {format_coupon(coupon)}")
+        return
+
+    if state.current_order_id is None:
+        print("선택된 주문이 없습니다. 먼저 '주문 생성'을 사용하세요.")
+        return
+
+    if action in {"적용", "apply"}:
+        if not tail:
+            print("사용법: 쿠폰 적용 <코드>")
+            return
+        try:
+            order = store.apply_coupon(state.current_order_id, tail[0])
+        except ValueError as exc:
+            print(str(exc))
+            return
+        print(
+            f"쿠폰이 적용되었습니다. 할인 {format_money(order.discount_amount)},"
+            f" 결제 금액 {format_money(order.final_total)}"
+        )
+    elif action in {"제거", "remove"}:
+        try:
+            store.remove_coupon(state.current_order_id)
+        except ValueError as exc:
+            print(str(exc))
+            return
+        print("쿠폰이 제거되었습니다.")
+    else:
+        print("알 수 없는 쿠폰 명령어입니다.")
+
+
+def format_coupon(coupon: Coupon) -> str:
+    if coupon.kind is DiscountKind.PERCENT:
+        return f"{coupon.value}% 할인"
+    return f"{format_money(coupon.value)}원 할인"
+
+
+def print_order(order: Order) -> None:
     print(f"주문 #{order.id} ({format_status(order.status)})")
     if order.note:
         print(f"메모: {order.note}")
@@ -225,7 +277,12 @@ def print_order(order) -> None:
             f"  {idx}. {item.name}{options} x{item.quantity}"
             f" - {format_money(item.line_total)}"
         )
-    print(f"합계: {format_money(order.total)}")
+    if order.coupon is not None:
+        print(f"소계: {format_money(order.total)}")
+        print(f"쿠폰 {order.coupon.code} 할인: -{format_money(order.discount_amount)}")
+        print(f"결제 금액: {format_money(order.final_total)}")
+    else:
+        print(f"합계: {format_money(order.total)}")
 
 
 def parse_int_arg(args: list[str], name: str) -> int | None:
